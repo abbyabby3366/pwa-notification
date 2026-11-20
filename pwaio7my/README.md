@@ -22,7 +22,7 @@ A single-page Progressive Web App (PWA) with a lightweight Node.js + TypeScript 
 | --- | --- | --- | --- |
 | `NODE_ENV` | Recommended | `production` | Set to `production` in deployment. |
 | `PORT` | Optional | `3000` (prod) / `3001` (dev) | Server listens on `0.0.0.0:$PORT`. |
-| `UPSTREAM_URL` | Optional | *(unset)* | Set to `https://pwa.neuron.my` to enable **Reverse-Proxy PWA Wrapper mode**—proxies the upstream site and injects `manifest.webmanifest`, `/sw.js`, iOS meta tags, and a floating **Enable Notifications** button. |
+| `UPSTREAM_URL` | Optional | *(unset)* | Set to an internal upstream URL (e.g. `http://pwaneuronmy:3000` or `http://127.0.0.1:3005`) to enable **Reverse-Proxy PWA Wrapper mode**—proxies the upstream site and injects `manifest.webmanifest`, `/sw.js`, iOS meta tags, and a floating **Enable Notifications** button. |
 | `PWA_SHORT_NAME` | Optional | `Push Test` | Short title used in the injected `apple-mobile-web-app-title` tag. |
 | `VAPID_SUBJECT` | Optional | `mailto:pwa-test@example.com` | **Must** be `mailto:` or `https://` (Apple APNs rejects `localhost`). Required if custom VAPID keys are set. |
 | `VAPID_PUBLIC_KEY` | Optional | Auto-generated in `data/vapid-keys.json` | URL-safe base64 VAPID public key. |
