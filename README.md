@@ -100,6 +100,11 @@ Route `https://push.yourdomain.com` → `http://127.0.0.1:3000`.
 
 ---
 
+## Pages
+
+- **`/`** — Single-page iOS PWA (Add to Home Screen, enable push notifications, self-test push).
+- **`/admin`** — Simple Admin Panel to view all subscribed devices and send push notifications to all devices or a specific device anytime.
+
 ## Post-Deploy Verification (Agent Checklist)
 
 Replace `https://push.yourdomain.com` with your deployed subdomain and verify all checks return HTTP `200`:

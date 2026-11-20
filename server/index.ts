@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import express from "express";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,10 +20,25 @@ interface VapidConfig {
 }
 
 interface StoredSubscription {
+  id: string;
   endpoint: string;
   subscription: PushSubscription;
   userAgent: string;
   createdAt: string;
+}
+
+function makeSubscriptionId(endpoint: string): string {
+  return crypto.createHash("sha256").update(endpoint).digest("hex").slice(0, 12);
+}
+
+function parseDeviceLabel(ua: string): string {
+  if (/iPhone/i.test(ua)) return "iPhone (iOS)";
+  if (/iPad/i.test(ua)) return "iPad (iOS)";
+  if (/Android/i.test(ua)) return "Android";
+  if (/Macintosh/i.test(ua)) return "macOS";
+  if (/Windows/i.test(ua)) return "Windows";
+  if (/Linux/i.test(ua)) return "Linux";
+  return "Unknown Device";
 }
 
 function ensureDataDir(): void {
@@ -79,7 +95,10 @@ function readSubscriptions(): StoredSubscription[] {
   if (!Array.isArray(parsed)) {
     throw new Error(`Corrupted subscriptions store at ${SUBSCRIPTIONS_FILE}`);
   }
-  return parsed as StoredSubscription[];
+  return (parsed as StoredSubscription[]).map((item) => ({
+    ...item,
+    id: item.id || makeSubscriptionId(item.endpoint),
+  }));
 }
 
 function writeSubscriptions(subscriptions: StoredSubscription[]): void {
@@ -113,13 +132,7 @@ app.get("/api/vapid-public-key", (_req, res) => {
 app.get("/api/subscriptions", (_req, res) => {
   try {
     const subs = readSubscriptions();
-    res.json({
-      count: subs.length,
-      endpoints: subs.map((s) => ({
-        host: new URL(s.endpoint).host,
-        createdAt: s.createdAt,
-      })),
-    });
+    res.json({ count: subs.length });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to read subscriptions";
     res.status(500).json({ error: message });
@@ -135,8 +148,10 @@ app.post("/api/subscribe", (req, res) => {
     }
 
     const subs = readSubscriptions();
+    const id = makeSubscriptionId(subscription.endpoint);
     const existingIndex = subs.findIndex((s) => s.endpoint === subscription.endpoint);
     const record: StoredSubscription = {
+      id,
       endpoint: subscription.endpoint,
       subscription,
       userAgent: typeof req.headers["user-agent"] === "string" ? req.headers["user-agent"] : "unknown",
@@ -153,6 +168,7 @@ app.post("/api/subscribe", (req, res) => {
 
     res.status(201).json({
       ok: true,
+      id,
       count: subs.length,
       pushHost: new URL(subscription.endpoint).host,
       savedAt: record.createdAt,
@@ -187,6 +203,8 @@ app.delete("/api/subscribe", (req, res) => {
 });
 
 interface DeliveryResult {
+  id: string;
+  device: string;
   pushHost: string;
   ok: boolean;
   statusCode?: number;
@@ -196,13 +214,14 @@ interface DeliveryResult {
 async function deliverPush(
   targets: StoredSubscription[],
   title: string,
-  body: string
+  body: string,
+  url: string
 ): Promise<DeliveryResult[]> {
   const payload = JSON.stringify({
     title,
     body,
     sentAt: new Date().toISOString(),
-    url: "/",
+    url,
   });
 
   const expiredEndpoints = new Set<string>();
@@ -210,12 +229,15 @@ async function deliverPush(
 
   for (const target of targets) {
     const pushHost = new URL(target.endpoint).host;
+    const device = parseDeviceLabel(target.userAgent);
     try {
       const response = await webpush.sendNotification(target.subscription, payload, {
         TTL: 60,
         urgency: "high",
       });
       results.push({
+        id: target.id,
+        device,
         pushHost,
         ok: true,
         statusCode: response.statusCode,
@@ -237,6 +259,8 @@ async function deliverPush(
       }
 
       results.push({
+        id: target.id,
+        device,
         pushHost,
         ok: false,
         statusCode,
@@ -253,12 +277,137 @@ async function deliverPush(
   return results;
 }
 
+// Self-test push endpoint (from the PWA itself)
 app.post("/api/send", async (req, res) => {
   try {
     const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
     const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
     const endpoint = typeof req.body?.endpoint === "string" ? req.body.endpoint.trim() : "";
-    const sendToAll = req.body?.sendToAll === true;
+    const rawDelay = req.body?.delaySeconds;
+
+    if (!title) {
+      res.status(400).json({ error: "Notification title is required." });
+      return;
+    }
+    if (!body) {
+      res.status(400).json({ error: "Notification message is required." });
+      return;
+    }
+    if (!endpoint) {
+      res.status(400).json({ error: "Missing device endpoint." });
+      return;
+    }
+
+    let delaySeconds = 0;
+    if (rawDelay !== undefined) {
+      const parsedDelay = Number(rawDelay);
+      if (!Number.isInteger(parsedDelay) || parsedDelay < 0 || parsedDelay > 30) {
+        res.status(400).json({ error: "delaySeconds must be an integer between 0 and 30." });
+        return;
+      }
+      delaySeconds = parsedDelay;
+    }
+
+    const subs = readSubscriptions();
+    const targets = subs.filter((s) => s.endpoint === endpoint);
+
+    if (targets.length === 0) {
+      res.status(404).json({
+        error: "This device is not subscribed on the server yet. Enable notifications first.",
+      });
+      return;
+    }
+
+    if (delaySeconds > 0) {
+      const scheduledAt = new Date().toISOString();
+      setTimeout(() => {
+        deliverPush(targets, title, body, "/")
+          .then((results) => {
+            console.log(`[push] Delayed (${delaySeconds}s) delivery results:`, results);
+          })
+          .catch((err) => {
+            console.error("[push] Delayed delivery failed:", err);
+          });
+      }, delaySeconds * 1000);
+
+      res.status(202).json({
+        ok: true,
+        scheduled: true,
+        delaySeconds,
+        targetCount: targets.length,
+        scheduledAt,
+      });
+      return;
+    }
+
+    const results = await deliverPush(targets, title, body, "/");
+    const anyFailed = results.some((r) => !r.ok);
+
+    res.status(anyFailed ? 502 : 200).json({
+      ok: !anyFailed,
+      scheduled: false,
+      deliveredAt: new Date().toISOString(),
+      results,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to send push notification";
+    res.status(500).json({ error: message });
+  }
+});
+
+// ---------------- Admin API ----------------
+
+app.get("/api/admin/subscriptions", (_req, res) => {
+  try {
+    const subs = readSubscriptions()
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    res.json({
+      count: subs.length,
+      subscriptions: subs.map((s) => ({
+        id: s.id,
+        device: parseDeviceLabel(s.userAgent),
+        pushHost: new URL(s.endpoint).host,
+        userAgent: s.userAgent,
+        createdAt: s.createdAt,
+      })),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to list subscriptions";
+    res.status(500).json({ error: message });
+  }
+});
+
+app.delete("/api/admin/subscriptions/:id", (req, res) => {
+  try {
+    const id = req.params.id?.trim();
+    if (!id) {
+      res.status(400).json({ error: "Missing subscription ID." });
+      return;
+    }
+
+    const subs = readSubscriptions();
+    const nextSubs = subs.filter((s) => s.id !== id);
+    if (nextSubs.length === subs.length) {
+      res.status(404).json({ error: `Subscription "${id}" not found.` });
+      return;
+    }
+
+    writeSubscriptions(nextSubs);
+    res.json({ ok: true, id, count: nextSubs.length });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to remove subscription";
+    res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/admin/send", async (req, res) => {
+  try {
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
+    const url = typeof req.body?.url === "string" && req.body.url.trim().length > 0 ? req.body.url.trim() : "/";
+    const targetId = typeof req.body?.targetId === "string" ? req.body.targetId.trim() : "";
     const rawDelay = req.body?.delaySeconds;
 
     if (!title) {
@@ -281,15 +430,13 @@ app.post("/api/send", async (req, res) => {
     }
 
     const subs = readSubscriptions();
-    const targets = sendToAll
-      ? subs
-      : subs.filter((s) => s.endpoint === endpoint);
+    const targets = targetId ? subs.filter((s) => s.id === targetId) : subs;
 
     if (targets.length === 0) {
       res.status(404).json({
-        error: sendToAll
-          ? "No subscribed devices found on the server."
-          : "This device is not subscribed on the server yet. Enable notifications first.",
+        error: targetId
+          ? `Target device "${targetId}" was not found.`
+          : "No subscribed devices found on the server.",
       });
       return;
     }
@@ -297,12 +444,12 @@ app.post("/api/send", async (req, res) => {
     if (delaySeconds > 0) {
       const scheduledAt = new Date().toISOString();
       setTimeout(() => {
-        deliverPush(targets, title, body)
+        deliverPush(targets, title, body, url)
           .then((results) => {
-            console.log(`[push] Delayed (${delaySeconds}s) delivery results:`, results);
+            console.log(`[admin-push] Delayed (${delaySeconds}s) delivery results:`, results);
           })
           .catch((err) => {
-            console.error("[push] Delayed delivery failed:", err);
+            console.error("[admin-push] Delayed delivery failed:", err);
           });
       }, delaySeconds * 1000);
 
@@ -316,7 +463,7 @@ app.post("/api/send", async (req, res) => {
       return;
     }
 
-    const results = await deliverPush(targets, title, body);
+    const results = await deliverPush(targets, title, body, url);
     const anyFailed = results.some((r) => !r.ok);
 
     res.status(anyFailed ? 502 : 200).json({
@@ -345,6 +492,10 @@ if (fs.existsSync(DIST_DIR)) {
       },
     })
   );
+
+  app.get(["/admin", "/admin/"], (_req, res) => {
+    res.sendFile(path.join(DIST_DIR, "admin.html"));
+  });
 
   app.get("/{*splat}", (_req, res) => {
     res.sendFile(path.join(DIST_DIR, "index.html"));

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Admin — PWA Push Test</title>
+    <meta name="theme-color" content="#0b1120" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  </head>
+  <body>
+    <main class="shell shell-wide">
+      <header class="hero">
+        <div class="hero-top">
+          <div class="app-mark" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 3a6 6 0 0 0-6 6v3.2c0 .7-.26 1.38-.72 1.9L4 15.5c-.32.36-.06.93.42.93h15.16c.48 0 .74-.57.42-.93l-1.28-1.4A2.85 2.85 0 0 1 18 12.2V9a6 6 0 0 0-6-6Z"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M9.75 18.75a2.25 2.25 0 0 0 4.5 0"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+          <div>
+            <h1>Push Admin Panel</h1>
+            <p class="subtitle">Send Web Push notifications to subscribed devices anytime</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <a href="/" class="btn btn-secondary btn-sm">PWA Page</a>
+        </div>
+      </header>
+
+      <!-- Global Error Banner -->
+      <section id="admin-error-banner" class="alert alert-error" role="alert" hidden>
+        <strong id="admin-error-title">Error</strong>
+        <p id="admin-error-message"></p>
+      </section>
+
+      <!-- Compose & Send Card -->
+      <section class="card" aria-labelledby="compose-heading">
+        <div class="card-header">
+          <h2 id="compose-heading">Send Notification</h2>
+          <span id="device-count-pill" class="pill pill-neutral">0 devices</span>
+        </div>
+
+        <form id="admin-send-form" class="form-stack">
+          <div class="form-grid">
+            <label class="field">
+              <span>Target Device</span>
+              <select id="select-target">
+                <option value="">All Subscribed Devices</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Delay</span>
+              <select id="select-delay">
+                <option value="0">Send Immediately</option>
+                <option value="5">Delay 5 seconds</option>
+                <option value="10">Delay 10 seconds</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Title</span>
+            <input
+              id="admin-title"
+              type="text"
+              value="Admin Notification"
+              maxlength="80"
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Message</span>
+            <textarea id="admin-body" rows="3" maxlength="240" required>Hello! This push was sent from the Admin Panel.</textarea>
+          </label>
+
+          <label class="field">
+            <span>Open URL on Tap (optional)</span>
+            <input id="admin-url" type="text" value="/" placeholder="/" maxlength="200" />
+          </label>
+
+          <button id="btn-admin-send" type="submit" class="btn btn-primary" disabled>
+            Send Push Notification
+          </button>
+        </form>
+      </section>
+
+      <!-- Subscribed Devices Table -->
+      <section class="card" aria-labelledby="devices-heading">
+        <div class="card-header">
+          <h2 id="devices-heading">Subscribed Devices</h2>
+          <span class="meta-muted">Auto-syncs every 10s</span>
+        </div>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Device</th>
+                <th>Push Service</th>
+                <th>Subscribed (GMT+8)</th>
+                <th class="col-actions">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="devices-tbody">
+              <tr>
+                <td colspan="4" class="table-empty">Loading subscribed devices…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Delivery Activity Log -->
+      <section class="card" aria-labelledby="admin-log-heading">
+        <div class="card-header">
+          <h2 id="admin-log-heading">Delivery Log</h2>
+        </div>
+        <ul id="admin-log" class="log-list">
+          <li class="log-empty">No notifications sent in this session yet.</li>
+        </ul>
+      </section>
+    </main>
+
+    <!-- Delete Subscription Confirmation Dialog -->
+    <dialog id="confirm-delete-dialog" class="confirm-dialog" aria-labelledby="delete-dialog-title">
+      <div class="dialog-content">
+        <h3 id="delete-dialog-title">Remove subscribed device?</h3>
+        <p id="delete-dialog-text">
+          This device will be deleted from the server and will no longer receive notifications.
+        </p>
+        <div class="dialog-actions">
+          <button id="btn-cancel-delete" type="button" class="btn btn-secondary">Cancel</button>
+          <button id="btn-confirm-delete" type="button" class="btn btn-danger">Confirm Delete</button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/admin.ts"></script>
+  </body>
+</html>
