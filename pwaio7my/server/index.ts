@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import fs from "node:fs";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import webpush, { type PushSubscription } from "web-push";
 
@@ -12,6 +13,10 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 const VAPID_FILE = path.join(DATA_DIR, "vapid-keys.json");
 const SUBSCRIPTIONS_FILE = path.join(DATA_DIR, "subscriptions.json");
 const DIST_DIR = path.join(ROOT_DIR, "dist");
+
+const UPSTREAM_URL = process.env.UPSTREAM_URL?.trim().replace(/\/+$/, "") || "";
+const UPSTREAM_ORIGIN = UPSTREAM_URL ? new URL(UPSTREAM_URL).origin : "";
+const PWA_SHORT_NAME = process.env.PWA_SHORT_NAME?.trim() || "Push Test";
 
 interface VapidConfig {
   subject: string;
@@ -478,27 +483,178 @@ app.post("/api/admin/send", async (req, res) => {
   }
 });
 
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+]);
+
+function escapeHtmlAttr(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function injectPwaTags(html: string): string {
+  const safeShortName = escapeHtmlAttr(PWA_SHORT_NAME);
+  const headInjection = [
+    `<link rel="manifest" href="/manifest.webmanifest">`,
+    `<meta name="apple-mobile-web-app-capable" content="yes">`,
+    `<meta name="mobile-web-app-capable" content="yes">`,
+    `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`,
+    `<meta name="apple-mobile-web-app-title" content="${safeShortName}">`,
+    `<link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png">`,
+  ].join("\n");
+
+  const bodyInjection = `<script src="/inject.js" defer></script>`;
+
+  let output = html;
+  if (/<\/head>/i.test(output)) {
+    output = output.replace(/<\/head>/i, `${headInjection}\n</head>`);
+  } else {
+    output = `${headInjection}\n${output}`;
+  }
+
+  if (/<\/body>/i.test(output)) {
+    output = output.replace(/<\/body>/i, `${bodyInjection}\n</body>`);
+  } else {
+    output = `${output}\n${bodyInjection}`;
+  }
+
+  return output;
+}
+
+function readRawBody(req: Request): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+async function proxyToUpstream(req: Request, res: Response): Promise<void> {
+  const targetUrl = new URL(req.originalUrl, UPSTREAM_ORIGIN);
+  const proxyOrigin = `${req.protocol}://${req.get("host")}`;
+
+  const forwardHeaders = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lower) || value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const v of value) forwardHeaders.append(key, v);
+    } else {
+      forwardHeaders.set(key, value);
+    }
+  }
+  forwardHeaders.set("host", new URL(UPSTREAM_ORIGIN).host);
+  forwardHeaders.set("accept-encoding", "identity");
+
+  const hasBody = !["GET", "HEAD"].includes(req.method.toUpperCase());
+  const bodyBuffer = hasBody ? await readRawBody(req) : undefined;
+
+  let upstreamRes: globalThis.Response;
+  try {
+    upstreamRes = await fetch(targetUrl, {
+      method: req.method,
+      headers: forwardHeaders,
+      body: bodyBuffer && bodyBuffer.length > 0 ? new Uint8Array(bodyBuffer) : undefined,
+      redirect: "manual",
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Upstream unreachable";
+    res.status(502).type("text/plain").send(`Bad Gateway: Could not reach ${UPSTREAM_ORIGIN} (${message})`);
+    return;
+  }
+
+  const contentType = upstreamRes.headers.get("content-type") ?? "";
+  const isHtml = contentType.toLowerCase().includes("text/html");
+
+  res.status(upstreamRes.status);
+
+  upstreamRes.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lower) || lower === "content-encoding" || lower === "set-cookie") {
+      return;
+    }
+    if (isHtml && (lower === "content-security-policy" || lower === "content-security-policy-report-only")) {
+      return;
+    }
+    if (lower === "location") {
+      const rewritten = value.startsWith(UPSTREAM_ORIGIN)
+        ? value.replace(UPSTREAM_ORIGIN, proxyOrigin)
+        : value;
+      res.setHeader("location", rewritten);
+      return;
+    }
+    res.setHeader(key, value);
+  });
+
+  const setCookies =
+    typeof upstreamRes.headers.getSetCookie === "function"
+      ? upstreamRes.headers.getSetCookie()
+      : [];
+  if (setCookies.length > 0) {
+    res.setHeader(
+      "set-cookie",
+      setCookies.map((cookie) => cookie.replace(/;\s*domain=[^;]+/gi, ""))
+    );
+  }
+
+  if (isHtml) {
+    const html = await upstreamRes.text();
+    res.send(injectPwaTags(html));
+    return;
+  }
+
+  if (!upstreamRes.body) {
+    res.end();
+    return;
+  }
+
+  const nodeStream = Readable.fromWeb(upstreamRes.body as unknown as import("node:stream/web").ReadableStream);
+  nodeStream.pipe(res);
+}
+
 // Serve built frontend in production
 if (fs.existsSync(DIST_DIR)) {
+  app.get(["/admin", "/admin/"], (_req, res) => {
+    res.sendFile(path.join(DIST_DIR, "admin.html"));
+  });
+
+  // In UPSTREAM_URL reverse-proxy mode, serve our static PWA/admin files (not index.html)
+  // and proxy all other requests (including "/") to UPSTREAM_URL with PWA tags injected.
   app.use(
     express.static(DIST_DIR, {
+      index: UPSTREAM_ORIGIN ? false : "index.html",
       setHeaders: (res, filePath) => {
         if (filePath.endsWith(".webmanifest")) {
           res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
         }
-        if (filePath.endsWith("sw.js")) {
+        if (filePath.endsWith("sw.js") || filePath.endsWith("inject.js")) {
           res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         }
       },
     })
   );
 
-  app.get(["/admin", "/admin/"], (_req, res) => {
-    res.sendFile(path.join(DIST_DIR, "admin.html"));
-  });
-
-  app.get("/{*splat}", (_req, res) => {
-    res.sendFile(path.join(DIST_DIR, "index.html"));
+  if (UPSTREAM_ORIGIN) {
+    app.use((req, res) => {
+      void proxyToUpstream(req, res);
+    });
+  } else {
+    app.get("/{*splat}", (_req, res) => {
+      res.sendFile(path.join(DIST_DIR, "index.html"));
+    });
+  }
+} else if (UPSTREAM_ORIGIN) {
+  app.use((req, res) => {
+    void proxyToUpstream(req, res);
   });
 }
 
@@ -506,5 +662,6 @@ const isProduction = process.env.NODE_ENV === "production";
 const port = Number(process.env.PORT ?? (isProduction ? 3000 : 3001));
 
 app.listen(port, "0.0.0.0", () => {
-  console.log(`[server] Listening on http://0.0.0.0:${port} (${isProduction ? "production" : "development"})`);
+  const modeNote = UPSTREAM_ORIGIN ? ` -> proxying ${UPSTREAM_ORIGIN}` : "";
+  console.log(`[server] Listening on http://0.0.0.0:${port}${modeNote} (${isProduction ? "production" : "development"})`);
 });
