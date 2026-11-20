@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>PWA Push Test</title>
+
+    <!-- Web App Manifest -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- iOS Home Screen / Standalone PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Push Test" />
+    <meta name="theme-color" content="#0b1120" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div class="hero-top">
+          <div class="app-mark" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 3a6 6 0 0 0-6 6v3.2c0 .7-.26 1.38-.72 1.9L4 15.5c-.32.36-.06.93.42.93h15.16c.48 0 .74-.57.42-.93l-1.28-1.4A2.85 2.85 0 0 1 18 12.2V9a6 6 0 0 0-6-6Z"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M9.75 18.75a2.25 2.25 0 0 0 4.5 0"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+          <div>
+            <h1>PWA Push Test</h1>
+            <p class="subtitle">iOS Home Screen &amp; Web Push verifier</p>
+          </div>
+        </div>
+        <button id="install-app" type="button" class="btn btn-secondary btn-sm" hidden>
+          Install App
+        </button>
+        <p id="install-status" class="sr-only" role="status"></p>
+      </header>
+
+      <!-- Global Error / Warning Banner -->
+      <section id="error-banner" class="alert alert-error" role="alert" hidden>
+        <strong id="error-title">Error</strong>
+        <p id="error-message"></p>
+      </section>
+
+      <!-- iOS Install Guidance Banner (shown when opened in iOS Safari browser, not standalone) -->
+      <section id="ios-install-banner" class="alert alert-info" hidden>
+        <strong>Add to Home Screen first (iOS requirement)</strong>
+        <p>
+          Apple only enables Web Push when this page is launched from your Home Screen.
+          Tap <strong>Share</strong> (square with arrow) in Safari, choose
+          <strong>Add to Home Screen</strong>, then open <strong>Push Test</strong> from your Home Screen.
+        </p>
+      </section>
+
+      <!-- Step 1: Readiness Checklist -->
+      <section class="card" aria-labelledby="status-heading">
+        <div class="card-header">
+          <h2 id="status-heading">Environment Checklist</h2>
+          <span id="device-badge" class="pill pill-neutral">Checking…</span>
+        </div>
+        <ul class="checklist" id="checklist">
+          <li class="check-row">
+            <span class="check-label">HTTPS / Secure Context</span>
+            <span id="chk-secure" class="status-tag">Checking</span>
+          </li>
+          <li class="check-row">
+            <span class="check-label">Standalone (Home Screen)</span>
+            <span id="chk-standalone" class="status-tag">Checking</span>
+          </li>
+          <li class="check-row">
+            <span class="check-label">Service Worker</span>
+            <span id="chk-sw" class="status-tag">Checking</span>
+          </li>
+          <li class="check-row">
+            <span class="check-label">Notification Permission</span>
+            <span id="chk-permission" class="status-tag">Checking</span>
+          </li>
+          <li class="check-row">
+            <span class="check-label">Push Subscription</span>
+            <span id="chk-push" class="status-tag">Checking</span>
+          </li>
+        </ul>
+        <p id="push-endpoint-info" class="meta-line" hidden></p>
+      </section>
+
+      <!-- Step 2: Subscription Controls -->
+      <section class="card" aria-labelledby="sub-heading">
+        <div class="card-header">
+          <h2 id="sub-heading">1. Notification Permission &amp; Push</h2>
+        </div>
+        <p class="hint">
+          iOS requires tapping a button directly to request permission and subscribe to Apple Push.
+        </p>
+        <div class="button-row">
+          <button id="btn-enable-push" type="button" class="btn btn-primary">
+            Enable Push Notifications
+          </button>
+          <button id="btn-unsubscribe" type="button" class="btn btn-danger-outline" hidden>
+            Unsubscribe
+          </button>
+        </div>
+      </section>
+
+      <!-- Step 3: Send Test Notifications -->
+      <section class="card" aria-labelledby="test-heading">
+        <div class="card-header">
+          <h2 id="test-heading">2. Send Test Notification</h2>
+        </div>
+
+        <form id="notify-form" class="form-stack">
+          <label class="field">
+            <span>Title</span>
+            <input
+              id="input-title"
+              type="text"
+              value="Hello from iOS PWA!"
+              maxlength="80"
+              required
+            />
+          </label>
+
+          <label class="field">
+            <span>Message</span>
+            <textarea id="input-body" rows="2" maxlength="200" required>Web Push is working on your Home Screen app.</textarea>
+          </label>
+
+          <div class="button-stack">
+            <button id="btn-send-push" type="submit" class="btn btn-primary" disabled>
+              Send Web Push Now
+            </button>
+            <button id="btn-send-delayed" type="button" class="btn btn-accent" disabled>
+              Send Web Push in 5s (Lock Screen Test)
+            </button>
+            <button id="btn-send-local" type="button" class="btn btn-secondary" disabled>
+              Send Local Notification (No Server)
+            </button>
+          </div>
+          <p id="countdown-status" class="countdown-note" role="status" hidden></p>
+        </form>
+      </section>
+
+      <!-- Activity Log -->
+      <section class="card" aria-labelledby="log-heading">
+        <div class="card-header">
+          <h2 id="log-heading">Activity Log</h2>
+          <span id="server-count" class="meta-muted"></span>
+        </div>
+        <ul id="activity-log" class="log-list">
+          <li class="log-empty">No events yet.</li>
+        </ul>
+      </section>
+    </main>
+
+    <!-- Confirmation Dialog for Unsubscribe (Destructive Action) -->
+    <dialog id="confirm-unsubscribe-dialog" class="confirm-dialog" aria-labelledby="confirm-title">
+      <div class="dialog-content">
+        <h3 id="confirm-title">Unsubscribe this device?</h3>
+        <p>
+          This will remove your push subscription from this browser and from the server.
+          You will stop receiving test push notifications until you subscribe again.
+        </p>
+        <div class="dialog-actions">
+          <button id="btn-cancel-unsubscribe" type="button" class="btn btn-secondary">
+            Cancel
+          </button>
+          <button id="btn-confirm-unsubscribe" type="button" class="btn btn-danger">
+            Confirm Unsubscribe
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
