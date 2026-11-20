@@ -14,8 +14,6 @@ Deploy **two separate apps** on two HTTPS subdomains:
 | `pwaio7my/` | `https://pwa.io7.my` | **PWA + iOS Web Push + `/admin` server**. When `UPSTREAM_URL` is set (e.g. `https://pwa.neuron.my`), it reverse-proxies that upstream site and injects `manifest.webmanifest`, iOS meta tags, `/sw.js`, and a floating **Enable Notifications** button on the fly. | `3000` |
 
 > **End-state:** Users open `https://pwa.io7.my` on iPhone Safari (which displays the `pwa.neuron.my` app), tap **Add to Home Screen**, open it from the Home Screen, and tap **Enable Notifications**. You can then open **`https://pwa.io7.my/admin`** anytime to send push notifications to subscribed devices.
->
-> Later, to wrap `https://statsdashboard.onrender.com` instead, just change `UPSTREAM_URL=https://statsdashboard.onrender.com` on `pwaio7my` and restart—no code changes needed.
 
 ---
 
